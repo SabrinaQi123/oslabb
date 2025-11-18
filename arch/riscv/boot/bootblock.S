@@ -18,14 +18,30 @@ main:
 
 	// TODO: [p1-task1] call BIOS to print string "It's bootblock!"
 
+    la   a0, msg            # arg0 = 字符串地址
+    
+    li   a7, BIOS_PUTSTR 
+    jal  bios_func_entry
 
 	// TODO: [p1-task2] call BIOS to read kernel in SD card
+    
+    li a7, BIOS_SDREAD      // a7 = BIOS_SDREAD（ 11）
 
+    la a0, kernel           // a0 = 内核要加载到的内存地址 0x50201000
+
+    la t0, os_size_loc      // t0 = 存放内核扇区数的内存地址 0x502001fc
+    lh a1, 0(t0)            // a1 = *(uint16_t*)0x502001fc = 内核占用的扇区数
+
+    li a2, 1                // a2 = 起始扇区号 = 1
+
+    jal bios_func_entry     // 调用 BIOS，从 SD 卡把 kernel 读入内存 [a0]
 
 	// TODO: [p1-task4] load task-related arguments and pass them to kernel
 
 
 	// TODO: [p1-task2] jump to kernel to start UCAS-OS
+    la t0, kernel   
+    jr t0            
 
 	/************************************************************/
 	/* Do not touch this comment. Reserved for future projects. */
@@ -37,5 +53,5 @@ stop:
 
 .data
 
-msg: .string "It's a bootloader...\n\r"
+msg: .string "It's wangheming23's bootloader...\n\r"
 
