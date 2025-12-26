@@ -1,36 +1,49 @@
-#include <asm.h>
 #include <common.h>
-#include <os/kernel.h>
+#include <asm.h>
+#include <asm/unistd.h>
 #include <os/loader.h>
-#include <os/string.h>
+#include <os/irq.h>
+#include <os/sched.h>
+#include <os/lock.h>
+#include <os/kernel.h>
 #include <os/task.h>
+#include <os/string.h>
+#include <os/loader.h>
+#include <os/mm.h>
+#include <os/time.h>
+#include <sys/syscall.h>
+#include <screen.h>
+#include <printk.h>
+#include <assert.h>
 #include <type.h>
+#include <csr.h>
 
-#define VERSION_BUF 50
 
-int version = 3;  // version must between 0 and 9
-char buf[VERSION_BUF];
+extern void ret_from_exception();
 
 // Task info array
 int task_num;
+
 task_info_t tasks[TASK_MAXNUM];
 
-static int bss_check(void) {
-    for (int i = 0; i < VERSION_BUF; ++i) {
-        if (buf[i] != 0) {
-            return 0;
-        }
-    }
-    return 1;
-}
 
 static void init_jmptab(void) {
     volatile long (*(*jmptab))() = (volatile long (*(*))())KERNEL_JMPTAB_BASE;
 
-    jmptab[CONSOLE_PUTSTR] = (volatile long (*)())port_write;
-    jmptab[CONSOLE_PUTCHAR] = (volatile long (*)())port_write_ch;
-    jmptab[CONSOLE_GETCHAR] = (volatile long (*)())port_read_ch;
-    jmptab[SD_READ] = (volatile long (*)())sd_read;
+    jmptab[CONSOLE_GETCHAR] = (long (*)())port_read_ch;
+    jmptab[SD_READ]         = (long (*)())sd_read;
+    jmptab[SD_WRITE]        = (long (*)())sd_write;
+    jmptab[QEMU_LOGGING]    = (long (*)())qemu_logging;
+    jmptab[SET_TIMER]       = (long (*)())set_timer;
+    jmptab[READ_FDT]        = (long (*)())read_fdt;
+    jmptab[MOVE_CURSOR]     = (long (*)())screen_move_cursor;
+    jmptab[PRINT]           = (long (*)())printk;
+    jmptab[YIELD]           = (long (*)())do_scheduler;
+    jmptab[MUTEX_INIT]      = (long (*)())do_mutex_lock_init;
+    jmptab[MUTEX_ACQ]       = (long (*)())do_mutex_lock_acquire;
+    jmptab[MUTEX_RELEASE]   = (long (*)())do_mutex_lock_release;
+    // TODO: [p2-task1] (S-core) initialize system call table.
+
 }
 
 static void init_task_info(void) {
@@ -39,131 +52,97 @@ static void init_task_info(void) {
 }
 
 /************************************************************/
-/* Do not touch this comment. Reserved for future projects. */
+static void init_pcb_stack(
+    ptr_t kernel_stack, ptr_t user_stack, ptr_t entry_point,
+    pcb_t *pcb)
+{
+     /* TODO: [p2-task3] initialization of registers on kernel stack
+      * HINT: sp, ra, sepc, sstatus
+      * NOTE: To run the task in user mode, you should set corresponding bits
+      *     of sstatus(SPP, SPIE, etc.).
+      */
+    regs_context_t *pt_regs =
+        (regs_context_t *)(kernel_stack - sizeof(regs_context_t));
+
+
+    /* TODO: [p2-task1] set sp to simulate just returning from switch_to
+     * NOTE: you should prepare a stack, and push some values to
+     * simulate a callee-saved context.
+     */
+    switchto_context_t *pt_switchto =
+        (switchto_context_t *)((ptr_t)pt_regs - sizeof(switchto_context_t));
+
+}
+
+static void init_pcb(void)
+{
+    /* TODO: [p2-task1] load needed tasks and init their corresponding PCB */
+
+
+    /* TODO: [p2-task1] remember to initialize 'current_running' */
+
+}
+
+static void init_syscall(void)
+{
+    // TODO: [p2-task3] initialize system call table.
+}
 /************************************************************/
 
-static int getchar() {
-    while (1) {
-        int ch = bios_getchar();
-        if (ch != -1) {
-            return ch;
-        }
-    }
-}
 
-static int echoed_getchar() {
-    int ch = getchar();
-    bios_putchar(ch);
-    if (ch == '\r') bios_putchar('\n');
-    return ch;
-}
 
-static int isdigit(char c) { return c >= '0' && c <= '9'; }
 
-static int readint() {
-    char c = echoed_getchar();
-    while (!isdigit(c)) c = echoed_getchar();
-    int val = 0;
-    while (isdigit(c)) {
-        val = val * 10 + (c - '0');
-        c = echoed_getchar();
-    }
-    return val;
-}
 
-static int readline(char* buffer, int size) {
-    int count = 0;
-    while (count < size - 1) {
-        char c = echoed_getchar();
-        if (c == '\n' || c == '\r') {
-            break;
-        }
-        buffer[count++] = c;
-    }
-    buffer[count] = 0;
-    return count;
-}
 
-static void writeint(int val) {
-    if (val == 0)
-        bios_putchar('0');
-    else {
-        if (val / 10) writeint(val / 10);
-        bios_putchar('0' + val % 10);
-    }
-}
 
-int main(int argc, char** argv) {
-    // INFO:
-    // argc: int task_num (in p1-task3, p1-task4)
-    // argv: task_info_t* task_info (in p1-task4)
-    task_num = argc;
-    memcpy((void*)tasks, (void*)argv, sizeof(task_info_t) * task_num);
-
-    // Check whether .bss section is set to zero
-    int check = bss_check();
-
+int main(void)
+{
     // Init jump table provided by kernel and bios(ΦωΦ)
     init_jmptab();
 
     // Init task information (〃'▽'〃)
     init_task_info();
 
-    // Output 'Hello OS!', bss check result and OS version
-    char output_str[] = "bss check: _ version: _\n\r";
-    char output_val[2] = {0};
-    int i, output_val_pos = 0;
+    // Init Process Control Blocks |•'-'•) ✧
+    init_pcb();
+    printk("> [INIT] PCB initialization succeeded.\n");
 
-    output_val[0] = check ? 't' : 'f';
-    output_val[1] = version + '0';
-    for (i = 0; i < sizeof(output_str); ++i) {
-        buf[i] = output_str[i];
-        if (buf[i] == '_') {
-            buf[i] = output_val[output_val_pos++];
-        }
-    }
+    
+    // Read CPU frequency (｡•ᴗ-)_
+    time_base = bios_read_fdt(TIMEBASE);
 
-    bios_putstr("Hello OS!\n\r");
-    bios_putstr(buf);
+    // Init lock mechanism o(´^｀)o
+    init_locks();
+    printk("> [INIT] Lock mechanism initialization succeeded.\n");
 
-    // while (true) {
-    // int _ = echoed_bios_getchar();
-    // bios_putchar(c);
-    // bios_putchar('\n');
-    // }
+    // Init interrupt (^_^)
+    init_exception();
+    printk("> [INIT] Interrupt processing initialization succeeded.\n");
 
-    // TODO: Load tasks by either task id [p1-task3] or task name [p1-task4],
-    //   and then execute them.
+    // Init system call table (0_0)
+    init_syscall();
+    printk("> [INIT] System call initialized successfully.\n");
 
-    while (1) {
-        for (int i = 0; i < task_num; i++) {
-            bios_putstr("Task #"), writeint(i), bios_putstr(":\t");
-            bios_putstr(tasks[i].name), bios_putstr("\n");
-        }
-        bios_putstr("Input task name: ");
-        char name[16] = {0};
-        bzero(name, 16);
-        readline(name, sizeof(name));
-        task_info_t* task_info = NULL;
-        for (int i = 0; i < task_num; i++) {
-            if (strcmp(tasks[i].name, name) == 0) {
-                task_info = tasks + i;
-                break;
-            }
-        }
-        if (!task_info) {
-            bios_putstr("Invalid name!\n");
-        } else {
-            void (*task)() = (void (*)())(load_task_img(*task_info));
-            bios_putstr("Loaded.\n");
-            task();
-            bios_putstr("Task completed.\n");
-        }
-    }
+    // Init screen (QAQ)
+    init_screen();
+    printk("> [INIT] SCREEN initialization succeeded.\n");
 
+    // TODO: [p2-task4] Setup timer interrupt and enable all interrupt globally
+    // NOTE: The function of sstatus.sie is different from sie's
+    
+
+
+    
     // Infinite while loop, where CPU stays in a low-power state (QAQQQQQQQQQQQ)
-    while (1) {
-        asm volatile("wfi");
+    
+    while (1)
+    {
+        // If you do non-preemptive scheduling, it's used to surrender control
+        do_scheduler();
+
+        // If you do preemptive scheduling, they're used to enable CSR_SIE and wfi
+        // enable_preempt();
+        // asm volatile("wfi");
     }
 
     return 0;
