@@ -14,13 +14,14 @@ typedef enum {
     SET_TIMER,
     READ_FDT,
     MOVE_CURSOR,
+    WRITE,
+    REFLUSH,
     PRINT,
     YIELD,
     MUTEX_INIT,
     MUTEX_ACQ,
     MUTEX_RELEASE,
-    NUM_ENTRIES,
-    CONSOLE_REFLUSH
+    NUM_ENTRIES
 } jmptab_idx_t;
 
 

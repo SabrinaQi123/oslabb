@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>//added
 
 #define IMAGE_FILE "./image"
 #define ARGS "[--extended] [--vm] <bootblock> <executable-file> ..."
@@ -13,24 +12,18 @@
 #define SECTOR_SIZE 512
 #define BOOT_LOADER_SIG_OFFSET 0x1fe
 #define OS_SIZE_LOC (BOOT_LOADER_SIG_OFFSET - 2)
-//task4
-#define TASKINFO_START_LOC     (BOOT_LOADER_SIG_OFFSET - 4)
-#define TASKINFO_SIZE_LOC      (BOOT_LOADER_SIG_OFFSET - 6)
-#define TASKINFO_TASKNUM_LOC   (BOOT_LOADER_SIG_OFFSET - 8)
-#define BATCH_FILE_LOC         (BOOT_LOADER_SIG_OFFSET - 10) //task5
-
-
+#define APP_INFO_ADDR_LOC (BOOT_LOADER_SIG_OFFSET - 10)
+#define BATCH_FILE_SECTOR 50
 #define BOOT_LOADER_SIG_1 0x55
 #define BOOT_LOADER_SIG_2 0xaa
 
 #define NBYTES2SEC(nbytes) (((nbytes) / SECTOR_SIZE) + ((nbytes) % SECTOR_SIZE != 0))
 
-/* TODO: [p1-task4] design your own task_info_t */
+/* design your own task_info_t */
 typedef struct {
-    char name[16];
-    int phyaddr_start, phyaddr_end;
-    uint64_t entrance;
-
+    char task_name[16];
+    int start_addr;
+    int block_nums;
 } task_info_t;
 
 #define TASK_MAXNUM 16
@@ -52,13 +45,8 @@ static uint32_t get_filesz(Elf64_Phdr phdr);
 static uint32_t get_memsz(Elf64_Phdr phdr);
 static void write_segment(Elf64_Phdr phdr, FILE *fp, FILE *img, int *phyaddr);
 static void write_padding(FILE *img, int *phyaddr, int new_phyaddr);
-// [Step 1] 自动填充 0，直到对齐到下一个扇区边界
-static void write_align_padding(FILE* img, int* phyaddr) {
-    int target = (((*phyaddr) + SECTOR_SIZE - 1) / SECTOR_SIZE) * SECTOR_SIZE;
-    write_padding(img, phyaddr, target);
-}
 static void write_img_info(int nbytes_kernel, task_info_t *taskinfo,
-                           short tasknum, FILE *img, int *phyaddr); // added phyaddr pointer
+                           short tasknum, FILE *img, int *taskinfo_addr);
 
 int main(int argc, char **argv)
 {
@@ -92,8 +80,7 @@ int main(int argc, char **argv)
     return 0;
 }
 
-
-/* TODO: [p1-task4] assign your task_info_t somewhere in 'create_image' */
+/* assign your task_info_t somewhere in 'create_image' */
 static void create_image(int nfiles, char *files[])
 {
     int tasknum = nfiles - 2;
@@ -108,18 +95,10 @@ static void create_image(int nfiles, char *files[])
     assert(img != NULL);
 
     /* for each input file */
-    /* [Step 3] 修改后的循环逻辑 */
     for (int fidx = 0; fidx < nfiles; ++fidx) {
 
-        int taskidx = fidx - 2; // fidx 0=bootblock, 1=kernel, 2=app1...
-
-        // 1. 记录任务开始位置 & 名字
-        if (taskidx >= 0) {
-            taskinfo[taskidx].phyaddr_start = phyaddr; 
-            // 记录文件名 (比如 "app1")
-            strncpy(taskinfo[taskidx].name, *files, 15);
-            taskinfo[taskidx].name[15] = '\0';
-        }
+        int taskidx = fidx - 2;
+        int start_addr = phyaddr;
 
         /* open input file */
         fp = fopen(*files, "r");
@@ -129,18 +108,16 @@ static void create_image(int nfiles, char *files[])
         read_ehdr(&ehdr, fp);
         printf("0x%04lx: %s\n", ehdr.e_entry, *files);
 
-        // 2. 记录入口地址
-        if (taskidx >= 0) {
-            taskinfo[taskidx].entrance = ehdr.e_entry;
-        }
-
         /* for each program header */
         for (int ph = 0; ph < ehdr.e_phnum; ph++) {
+
+            /* read program header */
             read_phdr(&phdr, fp, ph, ehdr);
+
             if (phdr.p_type != PT_LOAD) continue;
 
             /* write segment to the image */
-            write_segment(phdr, fp, img, &phyaddr); // 注意：这里传的是 phyaddr 指针
+            write_segment(phdr, fp, img, &phyaddr);
 
             /* update nbytes_kernel */
             if (strcmp(*files, "main") == 0) {
@@ -149,25 +126,49 @@ static void create_image(int nfiles, char *files[])
         }
 
         /* write padding bytes */
-        // 3. 对齐填充：Bootblock 固定 512，其他按扇区紧密排列
+        /* only padding bootblock is allowed!
+         */
         if (strcmp(*files, "bootblock") == 0) {
             write_padding(img, &phyaddr, SECTOR_SIZE);
         } else {
-            write_align_padding(img, &phyaddr); // 使用 Step 1 的辅助函数
+            write_padding(img, &phyaddr, phyaddr + (phyaddr & 1)); // 2字节对齐
+            strcpy(taskinfo[taskidx].task_name, *files);
+            taskinfo[taskidx].start_addr = start_addr;
+            taskinfo[taskidx].block_nums  = NBYTES2SEC(phyaddr) - start_addr / SECTOR_SIZE; // 考虑到一边上取整，一边下取整。这样的算法是合理的
+            printf("current phyaddr:%x\n", phyaddr);
+            printf("%s: start_addr is %x, blocknums is %d\n", taskinfo[taskidx].task_name, taskinfo[taskidx].start_addr,taskinfo[taskidx].block_nums);
         }
-
-        // 4. 记录任务结束位置
-        if (taskidx >= 0) {
-            taskinfo[taskidx].phyaddr_end = phyaddr;
-        }
-
         fclose(fp);
         files++;
     }
-
-    // 循环结束后，调用写信息函数 
     write_img_info(nbytes_kernel, taskinfo, tasknum, img, &phyaddr);
+    printf("current phyaddr:%x\n", phyaddr);
+    /*
+     * Ensure the image is padded to sector boundary and then reserve
+     * exactly one sector at the end for the batch file. Instead of
+     * using a hard-coded absolute sector (like 50), record the batch
+     * sector dynamically (the first free sector after current content)
+     * and write that value into the boot info area so the loader can
+     * find it at runtime.
+     */
+    fseek(img, phyaddr, SEEK_SET);
+    /* pad to current sector boundary */
+    write_padding(img, &phyaddr, NBYTES2SEC(phyaddr) * SECTOR_SIZE);
+    printf("current phyaddr:%x\n", phyaddr);
 
+    /* reserve one sector for batch file at the end */
+    int current_sectors = NBYTES2SEC(phyaddr);
+    int batch_sector = current_sectors; /* batch will live at this sector */
+    write_padding(img, &phyaddr, (batch_sector + 1) * SECTOR_SIZE);
+    printf("Reserved one sector for batch file at sector %d, current phyaddr:%x\n", batch_sector, phyaddr);
+
+    /* write batch_sector into bootblock info area (after taskinfo addr/size)
+     * APP_INFO_ADDR_LOC already holds taskinfo addr and size (8 bytes).
+     * We write batch_sector as an int at APP_INFO_ADDR_LOC + 8.
+     */
+    fseek(img, APP_INFO_ADDR_LOC + 8, SEEK_SET);
+    fwrite(&batch_sector, sizeof(int), 1, img);
+    printf("Wrote batch sector (%d) to boot info at offset 0x%x\n", batch_sector, APP_INFO_ADDR_LOC + 8);
     fclose(img);
 }
 
@@ -243,68 +244,37 @@ static void write_padding(FILE *img, int *phyaddr, int new_phyaddr)
 }
 
 static void write_img_info(int nbytes_kernel, task_info_t *taskinfo,
-                           short tasknum, FILE * img, int *phyaddr)
+                           short tasknum, FILE * img, int *taskinfo_addr)
 {
-    // TODO: [p1-task3] & [p1-task4] write image info to some certain places
+    // write image info to some certain places
     // NOTE: os size, infomation about app-info sector(s) ...
-    
-    // write taskinfo
-    write_align_padding(img, phyaddr);
-    short taskinfo_start = (*phyaddr) / SECTOR_SIZE;
-    short taskinfo_bytes = sizeof(task_info_t) * tasknum;
-    fwrite(taskinfo, sizeof(task_info_t), tasknum, img), *phyaddr += taskinfo_bytes;
-    if (options.extended) {
-        printf("\ntaskinfo: \t%d bytes, starts at #%d sector\n", taskinfo_bytes, taskinfo_start);
-    }
+     // 计算 kernel 所占扇区数
+    short kernel_sectors = NBYTES2SEC(nbytes_kernel);
 
-    // preserve batch_file sector
-    write_align_padding(img, phyaddr);
-    short batch_file_sector = (*phyaddr) / SECTOR_SIZE;
-    if (options.extended) {
-        printf("batch_file: \treserved at #%d sector\n", batch_file_sector);
-    }
-    write_padding(img, phyaddr, *phyaddr + SECTOR_SIZE);
-
-    // write 2-byte taskinfo_start to TASKINFO_START_LOC
-    fseek(img, TASKINFO_START_LOC, SEEK_SET);
-    fwrite(&taskinfo_start, sizeof(taskinfo_start), 1, img);
-    if (options.extended)
-        printf(
-            "taskinfo_start:\t%d,\t%lu bytes at 0x%08x\n", taskinfo_start, sizeof(taskinfo_start),
-            TASKINFO_START_LOC);
-
-    // write 2-byte taskinfo_size to TASKINFO_SIZE_LOC
-    fseek(img, TASKINFO_SIZE_LOC, SEEK_SET);
-    fwrite(&taskinfo_bytes, sizeof(taskinfo_bytes), 1, img);
-    if (options.extended)
-        printf(
-            "taskinfo_bytes:\t%d,\t%lu bytes at 0x%08x\n", taskinfo_bytes, sizeof(taskinfo_bytes),
-            TASKINFO_SIZE_LOC);
-
-    // write 2-byte tasknum to TASKINFO_TASKNUM_LOC
-    fseek(img, TASKINFO_TASKNUM_LOC, SEEK_SET);
-    fwrite(&tasknum, sizeof(tasknum), 1, img);
-    if (options.extended)
-        printf(
-            "tasknum: \t%d,\t%lu bytes at 0x%08x\n", tasknum, sizeof(tasknum),
-            TASKINFO_TASKNUM_LOC);
-
-    // write 2-byte batch_file_sector to BATCH_FILE_LOC
-    fseek(img, BATCH_FILE_LOC, SEEK_SET);
-    fwrite(&batch_file_sector, sizeof(batch_file_sector), 1, img);
-    if (options.extended)
-        printf(
-            "batch_file_loc: %d,\t%lu bytes at 0x%08x\n", batch_file_sector,
-            sizeof(batch_file_sector), BATCH_FILE_LOC);
-
-    // write 2-byte size to OS_SIZE_LOC
+    // 跳转到 OS_SIZE_LOC 位置
     fseek(img, OS_SIZE_LOC, SEEK_SET);
-    short os_size = nbytes_kernel;
-    fwrite(&os_size, sizeof(os_size), 1, img);
-    if (options.extended)
-        printf("os_size: \t%d,\t%lu bytes at 0x%08x\n", os_size, sizeof(os_size), OS_SIZE_LOC);
-}
 
+    // 写入 kernel 所占扇区数（2字节）
+    fwrite(&kernel_sectors, sizeof(short), 1, img);
+    printf("kernel sectors: %d\n", kernel_sectors); 
+
+    // 写入用户程序数目（2字节，紧跟在 kernel_sectors 后面）
+    fwrite(&tasknum, sizeof(short), 1, img);
+    printf("user program count: %d\n", tasknum);
+
+        // 将taskinfo的size写进bootloader的末尾几个字节
+    int info_size = sizeof(task_info_t) * tasknum;
+    // 将定位信息写进bootloader的末尾几个字节
+    fseek(img, APP_INFO_ADDR_LOC, SEEK_SET);  // 文件指针指到 APP_INFO_ADDR_LOC
+    fwrite(taskinfo_addr, sizeof(int), 1, img);
+    printf("Task info address: %x\n", *taskinfo_addr);
+    fwrite(&info_size, sizeof(int), 1, img);    
+    printf("Task info size: %d\n", info_size);
+    fseek(img, *taskinfo_addr, SEEK_SET);  
+    fwrite(taskinfo, sizeof(task_info_t), tasknum, img);
+    printf("Task info written at: %x\n", *taskinfo_addr);
+    *taskinfo_addr += info_size;
+}
 
 /* print an error message and exit */
 static void error(char *fmt, ...)
@@ -316,6 +286,7 @@ static void error(char *fmt, ...)
     va_end(args);
     if (errno != 0) {
         perror(NULL);
-    }
+    
     exit(EXIT_FAILURE);
+}
 }

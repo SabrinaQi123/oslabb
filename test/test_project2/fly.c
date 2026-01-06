@@ -7,20 +7,23 @@
  * from: https://www.asciiart.eu/vehicles/airplanes
  */
 
-static char blank[] = {"                                                                   "};
-static char plane1[] = {"         _       "};
-static char plane2[] = {"       -=\\`\\     "};
-static char plane3[] = {"   |\\ ____\\_\\__  "};
-static char plane4[] = {" -=\\c`\"\"\"\"\"\"\" \"`)"};
-static char plane5[] = {"    `~~~~~/ /~~` "};
-static char plane6[] = {"      -==/ /     "};
-static char plane7[] = {"        '-'      "};
+static char blank[] = { "                                                                   " };
+static char plane1[] = { "         _       " };
+static char plane2[] = { "       -=\\`\\     " };
+static char plane3[] = { "   |\\ ____\\_\\__  " };
+static char plane4[] = { " -=\\c`\"\"\"\"\"\"\" \"`)" };
+static char plane5[] = { "    `~~~~~/ /~~` " };
+static char plane6[] = { "      -==/ /     " };
+static char plane7[] = { "        '-'      " };
 
-int main(void) {
+int main(void)
+{
     int j = 5;
 
-    while (1) {
-        for (int i = 0; i < 50; i++) {
+    while (1)
+    {
+        for (int i = 0; i < 50; i++)
+        {
             /* move */
             sys_move_cursor(i, j + 0);
             printf("%s", plane1);

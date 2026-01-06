@@ -8,34 +8,24 @@
 
 #define KERNEL_STACK		0x50500000
 
-.equ kernel_stack, 0x50500000+4096
-
-.extern __bss_start
-.extern __BSS_END__
-
 .section ".entry_function","ax"
 ENTRY(_start)
   /* Mask all interrupts */
   csrw CSR_SIE, zero
   csrw CSR_SIP, zero
 
-  /* TODO: [p1-task2] clear BSS for flat non-ELF images */
-
+  /* clear BSS for flat non-ELF images */
   la t0, __bss_start
-  la t1, __BSS_END__
-  mv t2, t0
+  la t1, __BSS_END__  
+  clear_bss:
+    sw zero, 0(t0)
+    addi t0, t0, 4
+    bltu t0, t1, clear_bss
 
-.clear:
-  sw zero, 0(t2)
-  addi t2, t2, 4
-  blt t2, t1, .clear
-
-  /* TODO: [p1-task2] setup C environment */
-
-  la sp, kernel_stack
-
-  jal main
-
+  /* setup C environment */
+  bss_done:
+    la sp, KERNEL_STACK
+    j main
 
 loop:
   wfi

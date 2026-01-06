@@ -17,27 +17,10 @@
 #include <sys/syscall.h>
 #include <type.h>
 
-#define VERSION_BUF 50
-
-#define TASK_RESULT 0x5fffff00
-
-int version = 3;  // version must between 0 and 9
-char buf[VERSION_BUF];
-
 extern void ret_from_exception();
 
 // Task info array
-int task_num;
 task_info_t tasks[TASK_MAXNUM];
-
-static int bss_check(void) {
-    for (int i = 0; i < VERSION_BUF; ++i) {
-        if (buf[i] != 0) {
-            return 0;
-        }
-    }
-    return 1;
-}
 
 static void init_jmptab(void) {
     volatile long (*(*jmptab))() = (volatile long (*(*))())KERNEL_JMPTAB_BASE;
@@ -51,6 +34,8 @@ static void init_jmptab(void) {
     jmptab[SET_TIMER] = (volatile long (*)())set_timer;
     jmptab[READ_FDT] = (volatile long (*)())read_fdt;
     jmptab[MOVE_CURSOR] = (volatile long (*)())screen_move_cursor;
+    jmptab[WRITE] = (volatile long (*)())screen_write;
+    jmptab[REFLUSH] = (volatile long (*)())screen_reflush;
     jmptab[PRINT] = (volatile long (*)())printk;
     jmptab[YIELD] = (volatile long (*)())do_scheduler;
     jmptab[MUTEX_INIT] = (volatile long (*)())do_mutex_lock_init;
@@ -58,231 +43,111 @@ static void init_jmptab(void) {
     jmptab[MUTEX_RELEASE] = (volatile long (*)())do_mutex_lock_release;
 
     // TODO: [p2-task1] (S-core) initialize system call table.
-    jmptab[CONSOLE_REFLUSH] = (volatile long (*)())screen_reflush;
 }
 
-static void init_task_info(void) {
-    // TODO: [p1-task4] Init 'tasks' array via reading app-info sector
+static void init_task_info(int app_info_loc, int app_info_size) {
+    // Init 'tasks' array via reading app-info sector
     // NOTE: You need to get some related arguments from bootblock first
+    int start_sec, blocknums;
+    start_sec = app_info_loc / SECTOR_SIZE;
+    blocknums = NBYTES2SEC(app_info_loc + app_info_size) - start_sec;
+    int task_info_addr = TASK_INFO_MEM;
+    bios_sd_read(task_info_addr, blocknums, start_sec);
+    int start_addr = (TASK_INFO_MEM + app_info_loc - start_sec * SECTOR_SIZE);
+    memcpy((uint8_t*)tasks, (uint8_t*)start_addr, app_info_size);
 }
 
 /************************************************************/
-
-#define KERNEL_STACK_PAGES 1
-#define USER_STACK_PAGES   4
-
-extern pcb_t pcb[NUM_MAX_TASK];
-int pid_counter = 1;
-
 static void init_pcb_stack(ptr_t kernel_stack, ptr_t user_stack, ptr_t entry_point, pcb_t* pcb) {
-    /* TODO: [p2-task3] initialization of registers on kernel stack
+    /* initialization of registers on kernel stack
      * HINT: sp, ra, sepc, sstatus
      * NOTE: To run the task in user mode, you should set corresponding bits
      *     of sstatus(SPP, SPIE, etc.).
      */
-    regs_context_t* pt_regs = (regs_context_t*)(kernel_stack - sizeof(regs_context_t));
-
-    /* TODO: [p2-task1] set sp to simulate just returning from switch_to
+    regs_context_t* pt_regs =
+        (regs_context_t*)(kernel_stack - sizeof(regs_context_t));
+    pt_regs->regs[1] = (uint64_t)entry_point;           // ra
+    pt_regs->regs[2] = user_stack; // sp
+    pt_regs->regs[4] = (uint64_t)pcb;                             // tp
+    pt_regs->sstatus = SR_SPIE;  // SPIE set to 1
+    pt_regs->sepc = (uint64_t)entry_point;
+    /* set sp to simulate just returning from switch_to
      * NOTE: you should prepare a stack, and push some values to
      * simulate a callee-saved context.
      */
     switchto_context_t* pt_switchto =
         (switchto_context_t*)((ptr_t)pt_regs - sizeof(switchto_context_t));
-
-    pcb->kernel_sp = (ptr_t)pt_switchto;
-    pcb->user_sp = user_stack;
-    // pcb->user_sp = pcb->kernel_sp;
-    pt_switchto->regs[SAVE_RA] = entry_point;
-    pt_switchto->regs[SAVE_SP] = user_stack;
+    pcb->kernel_sp = (reg_t)pt_switchto;
+    pt_switchto->regs[0] = (uint64_t)ret_from_exception; // ra
+    pt_switchto->regs[1] = (reg_t)pt_switchto;           // kernel_sp
 }
 
 static void init_pcb(void) {
-    /* TODO: [p2-task1] load needed tasks and init their corresponding PCB */
+    /* load needed tasks and init their corresponding PCB */
+    // PCB for kernel
+    uint64_t entry[NUM_MAX_TASK + 1]; /* entry of all tasks */
+    char needed_tasks[][16] = { "print1", "print2", "lock1", "lock2",
+                               "sleep",  "timer",  "fly" };
+    uint64_t entry_addr;
+    int tasknum = 0;
+    pid0_pcb.status = TASK_RUNNING;
+    pid0_pcb.list.prev = NULL;
+    pid0_pcb.list.next = NULL;
+    init_pcb_stack(pid0_pcb.kernel_sp, pid0_pcb.user_sp,
+        (uint64_t)ret_from_exception, &pid0_pcb);
+    // load task by name;
+    for (int i = 0; i < 7; i++) {
+        entry_addr = load_task_img(needed_tasks[i]);
+        // create a PCB
+        if (entry_addr != 0) {
+            pcb[tasknum].kernel_sp =
+                (reg_t)(allocKernelPage(1) + PAGE_SIZE); // 分配一页
+            pcb[tasknum].user_sp = (reg_t)(allocUserPage(1) + PAGE_SIZE);
+            pcb[tasknum].pid = tasknum + 1; // pid 0 is for kernel
+            pcb[tasknum].status = TASK_READY;
+            pcb[tasknum].cursor_x = 0;
+            pcb[tasknum].cursor_y = 0;
+            init_pcb_stack(pcb[tasknum].kernel_sp, pcb[tasknum].user_sp, entry_addr,
+                &pcb[tasknum]);
+            // add to ready queue
+            add_node_to_q(&pcb[tasknum].list, &ready_queue);
+
+            if (++tasknum >
+                NUM_MAX_TASK) // total tasks should be less than the threshold
+                break;
+        }
+    }
+
+    /* remember to initialize 'current_running' */
     current_running = &pid0_pcb;
-
-    for (int i = 0; i < task_num; i++) {
-        load_task_img(tasks[i]);
-    }
-
-    for (int i = 0; i < NUM_MAX_TASK; i++) {
-        pcb[i].status = TASK_EXITED;
-    }
-
-    const char* run_tasks[] = {"print1", "print2", "fly"};
-
-    for (int i = 0; i < sizeof(run_tasks) / sizeof(run_tasks[0]); i++) {
-        task_info_t* task = NULL;
-        for (int j = 0; j < task_num; j++) {
-            if (strcmp(run_tasks[i], tasks[j].name) == 0) {
-                task = &tasks[j];
-                break;
-            }
-        }
-        assert(task);
-        printk("> [INIT] Loading task %s.\n", task->name);
-        int kernel_stack_top = allocKernelPage(KERNEL_STACK_PAGES) + KERNEL_STACK_PAGES * PAGE_SIZE;
-        int user_stack_top = allocUserPage(USER_STACK_PAGES) + USER_STACK_PAGES * PAGE_SIZE;
-        pcb_t* alloc_pcb = NULL;
-        for (int j = 0; j < NUM_MAX_TASK; j++) {
-            if (pcb[j].status == TASK_EXITED) {
-                alloc_pcb = &pcb[j];
-                break;
-            }
-        }
-        assert(alloc_pcb);
-        alloc_pcb->pid = pid_counter;
-        alloc_pcb->status = TASK_READY;
-        strcpy(alloc_pcb->name, task->name);
-        init_pcb_stack(kernel_stack_top, user_stack_top, task->entrance, alloc_pcb);
-        list_append(&ready_queue, &alloc_pcb->list);
-        pid_counter++;
-    }
 }
 
 static void init_syscall(void) {
-    // TODO: [p2-task3] initialize system call table.
+    // initialize system call table.
+    syscall[SYSCALL_SLEEP] = (long (*)())do_sleep;
+    syscall[SYSCALL_YIELD] = (long (*)())do_scheduler;
+    syscall[SYSCALL_WRITE] = (long (*)())screen_write;
+    syscall[SYSCALL_CURSOR] = (long (*)())screen_move_cursor;
+    syscall[SYSCALL_REFLUSH] = (long (*)())screen_reflush;
+    syscall[SYSCALL_GET_TIMEBASE] = (long (*)())get_time_base;
+    syscall[SYSCALL_GET_TICK] = (long (*)())get_ticks;
+    syscall[SYSCALL_LOCK_INIT] = (long (*)())do_mutex_lock_init;
+    syscall[SYSCALL_LOCK_ACQ] = (long (*)())do_mutex_lock_acquire;
+    syscall[SYSCALL_LOCK_RELEASE] = (long (*)())do_mutex_lock_release;
 }
 /************************************************************/
 
-static void writeint(int val) {
-    if (val == 0)
-        bios_putchar('0');
-    else {
-        if (val / 10) writeint(val / 10);
-        bios_putchar('0' + val % 10);
-    }
-}
-
-static void writeptr(void* ptr) {
-    bios_putstr("0x");
-    uint64_t val = (uint64_t)ptr;
-    int started = 0;
-    for (int i = 64; i >= 0; i -= 4) {
-        int digit = (val >> i) & 0xf;
-        if (digit || started || i == 0) {
-            started = 1;
-            if (digit < 10)
-                bios_putchar('0' + digit);
-            else
-                bios_putchar('a' + (digit - 10));
-        }
-    }
-}
-
-static int getchar() {
-    while (1) {
-        int ch = bios_getchar();
-        if (ch != -1) {
-            return ch;
-        }
-    }
-}
-
-static int echoed_getchar() {
-    int ch = getchar();
-    bios_putchar(ch);
-    if (ch == 127) bios_putstr("\b \b");
-    // writeint(ch);
-    if (ch == '\r') bios_putchar('\n');
-    return ch;
-}
-
-static int isdigit(char c) { return c >= '0' && c <= '9'; }
-
-static int isalpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
-
-static int readint() {
-    char c = echoed_getchar();
-    while (!isdigit(c)) c = echoed_getchar();
-    int val = 0;
-    while (isdigit(c)) {
-        val = val * 10 + (c - '0');
-        c = echoed_getchar();
-    }
-    return val;
-}
-
-static int readline(char* buffer, int size) {
-    int count = 0;
-    while (count < size - 1) {
-        char c = echoed_getchar();
-        if (c == '\n' || c == '\r') {
-            break;
-        }
-        if (c == 127) {
-            if (count > 0) {
-                buffer[--count] = 0;
-            }
-            continue;
-        }
-        buffer[count++] = c;
-    }
-    buffer[count] = 0;
-    return count;
-}
-
-static void run_task(char* name) {
-    task_info_t* task_info = NULL;
-    for (int i = 0; i < task_num; i++) {
-        if (strcmp(tasks[i].name, name) == 0) {
-            task_info = tasks + i;
-            break;
-        }
-    }
-    if (!task_info) {
-        bios_putstr("Invalid name!\n");
-    } else {
-        void (*task)() = (void (*)())(load_task_img(*task_info));
-        bios_putstr("Loaded task.\n");
-        task();
-        bios_putstr("Task completed.\n");
-    }
-}
-
-void write_batchfile(char* cmd, int location) { bios_sd_write((unsigned int)cmd, 1, location); }
-void read_batchfile(char* cmd, int location) { bios_sd_read((unsigned int)cmd, 1, location); }
-
-int main(int argc, char** argv) {
+int main(int app_info_loc, int app_info_size) {
     // Init jump table provided by kernel and bios(ΦωΦ)
     init_jmptab();
 
-    // INFO:
-    // argc: argc
-    // argv+0: int task_num
-    // argv+8: task_info_t* task_info
-    // argv+16: int batchfile_location
-    if (argc != 3) {
-        bios_putstr("Invalid argc!\n");
-        return -1;
-    }
-    uint64_t* args = (void*)argv;
-    task_num = args[0];
-    task_info_t* task_info = (task_info_t*)args[1];
-    memcpy((void*)tasks, (void*)task_info, sizeof(task_info_t) * task_num);
-    int batchfile_location = args[2];
-
-    // Check whether .bss section is set to zero
-    int check = bss_check();
-    if (!check) {
-        bios_putstr("> [ERROR] .bss check failed");
-        while (1) asm volatile("wfi");
-    }
-
-    bios_putstr("> [META] OS kernel arguments: \n");
-    bios_putstr("> [META] task_num: "), writeint(task_num), bios_putstr("\n");
-    bios_putstr("> [META] task_info: "), writeptr(task_info), bios_putstr("\n");
-    bios_putstr("> [META] batchfile_location: "), writeint(batchfile_location), bios_putstr("\n");
+    // Init task information (〃'▽'〃)
+    init_task_info(app_info_loc, app_info_size);
 
     // Init Process Control Blocks |•'-'•) ✧
     init_pcb();
     printk("> [INIT] PCB initialization succeeded.\n");
-    
 
-    // while (true) {
-    // int _ = echoed_bios_getchar();
-    // bios_putchar(c);
-    // bios_putchar('\n');
-    // }
     // Read CPU frequency (｡•ᴗ-)_
     time_base = bios_read_fdt(TIMEBASE);
 
@@ -305,6 +170,7 @@ int main(int argc, char** argv) {
     // TODO: [p2-task4] Setup timer interrupt and enable all interrupt globally
     // NOTE: The function of sstatus.sie is different from sie's
 
+    // Infinite while loop, where CPU stays in a low-power state (QAQQQQQQQQQQQ)
     while (1) {
         // If you do non-preemptive scheduling, it's used to surrender control
         do_scheduler();

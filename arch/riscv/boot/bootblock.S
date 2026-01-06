@@ -1,122 +1,52 @@
 #include <asm/biosdef.h>
 
-// os size location (os_size could be sectors [p1-task3] or bytes [p1-task4])
+// os size location
 .equ os_size_loc, 0x502001fc
-.equ task_start_loc, 0x502001fa
-.equ task_size_loc, 0x502001f8
-.equ task_num_loc, 0x502001f6
-.equ batchfile_loc, 0x502001f4
 
 // kernel address (move kernel to here, and jmp here to start kernel)
 .equ kernel, 0x50201000
-.equ kernel_args, 0x50700000
 
 // BIOS function entry (jump here to use BIOS APIs)
 .equ bios_func_entry, 0x50150000
 
-.equ bios_putstr, 9
-.equ bios_sdread, 11
-
-.equ temp, 0x50600000
-.equ taskinfo, 0x50600000
-.extern tasks
+// application info address location
+.equ app_info_addr_loc, 0x502001f4
 
 .text
 .global main
 
 main:
-    // fence on all memory and I/O
-    fence
+	// fence on all memory and I/O
+	fence
 
-.hello_world:
-    // TODO: [p1-task1] call BIOS to print string "It's bootblock!"
-    la a7, bios_putstr
-    la a0, msg
-    jal bios_func_entry
+	// call BIOS to print string "It's bootblock!"
+	la a0, msg
+	li a7, BIOS_PUTSTR
+	jal bios_func_entry
 
+	// call BIOS to read kernel in SD card
+	li a7, BIOS_SDREAD        
+    la a0, kernel         
+    la t0, os_size_loc        
+    lh a1, 0(t0)              
+    li a2, 1                  
+    jal bios_func_entry       
+ 
 
-    // TODO: [p1-task2] call BIOS to read kernel in SD card
-    
-.load_kernel:
-    la t0, os_size_loc
-    lh t1, 0(t0) // kernel bytes
-    la a0, temp
-    add a1, t1, 511
-    sra a1, a1, 9 // sectors = ((bytes + 511) / 512)
-    li a2, 1
-    la a7, bios_sdread
-    // a0: memory_addr
-    // a1: num_of_blocks
-    // a2: block_id
-    // a7: bios_sdread
-    jal bios_func_entry
+	// load task-related arguments and pass them to kernel
+	la t1, app_info_addr_loc	
+	lw a0, (t1)		// pass the location for task info as parameter 1
+	lw a1, 4(t1)	// pass the size as parameter 2
 
-.copy_kernel:
-    la a0, kernel
-    la t0, os_size_loc
-    lh a1, 0(t0) // kernel bytes
-    jal copy_data
-
-
-
-    // TODO: [p1-task4] load task-related arguments and pass them to kernel
-.load_taskinfo:
-    la t0, task_start_loc
-    lh a2, 0(t0) // tasks start block_id
-    la t0, task_size_loc
-    lh t1, 0(t0) // tasks bytes
-    add a1, t1, 511
-    sra a1, a1, 9
-    la a0, taskinfo
-    la a7, bios_sdread
-    jal bios_func_entry
-
-//.copy_taskinfo:
-//    la a0, tasks
-//    la t0, task_size_loc
-//    lh a1, 0(t0)
-//    jal copy_data
-
-
-    // TODO: [p1-task2] jump to kernel to start UCAS-OS
-.start_kernel:
-    la t1, kernel_args
-    la t0, task_num_loc
-    lh t0, 0(t0)
-    sd t0, 0(t1) // t1+0: task_num
-    la t0, taskinfo
-    sd t0, 8(t1) // t1+8: taskinfo
-    la t0, batchfile_loc
-    lh t0, 0(t0)
-    sd t0, 16(t1) // t1+16: batchfile
-    li a0, 3 // argc
-    mv a1, t1 // argv
-    jal kernel
-
-    /************************************************************/
-    /* Do not touch this comment. Reserved for future projects. */
-    /************************************************************/
+	// jump to kernel to start UCAS-OS
+	jal kernel
+	/************************************************************/
+	/* Do not touch this comment. Reserved for future projects. */
+	/************************************************************/
 // while(1) --> stop here
 stop:
-    j stop
-    nop
-
-copy_data:
-    // a0: dest
-    // a1: src size (src locations is set to `temp`)
-.copy_start:
-    mv t0, a0 // t0: dest_cur
-    la t1, temp // t1: src_cur
-    la t2, temp
-    add t2, t2, a1 // t2: src_end
-.copy_loop:
-    lw t3, 0(t1)
-    sw t3, 0(t0)
-    add t0, t0, 4
-    add t1, t1, 4
-    blt t1, t2, .copy_loop
-.copy_end:
-    ret
+	j stop
+	nop
 
 .data
 
