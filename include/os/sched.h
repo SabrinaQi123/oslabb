@@ -29,14 +29,13 @@
 #ifndef INCLUDE_SCHEDULER_H_
 #define INCLUDE_SCHEDULER_H_
 
-#include <type.h>
 #include <os/list.h>
+#include <type.h>
 
 #define NUM_MAX_TASK 16
 
 /* used to save register infomation */
-typedef struct regs_context
-{
+typedef struct regs_context {
     /* Saved main processor registers.*/
     reg_t regs[32];
 
@@ -47,9 +46,25 @@ typedef struct regs_context
     reg_t scause;
 } regs_context_t;
 
+enum {
+    SAVE_RA,
+    SAVE_SP,
+    SAVE_S0,
+    SAVE_S1,
+    SAVE_S2,
+    SAVE_S3,
+    SAVE_S4,
+    SAVE_S5,
+    SAVE_S6,
+    SAVE_S7,
+    SAVE_S8,
+    SAVE_S9,
+    SAVE_S10,
+    SAVE_S11,
+};
+
 /* used to save register infomation in switch_to */
-typedef struct switchto_context
-{
+typedef struct switchto_context {
     /* Callee saved registers.*/
     reg_t regs[14];
 } switchto_context_t;
@@ -62,8 +77,7 @@ typedef enum {
 } task_status_t;
 
 /* Process Control Block */
-typedef struct pcb
-{
+typedef struct pcb {
     /* register context */
     // NOTE: this order must be preserved, which is defined in regs.h!!
     reg_t kernel_sp;
@@ -85,6 +99,7 @@ typedef struct pcb
     /* time(seconds) to wake up sleeping PCB */
     uint64_t wakeup_time;
 
+    char name[16];
 } pcb_t;
 
 /* ready queue to run */
@@ -94,19 +109,19 @@ extern list_head ready_queue;
 extern list_head sleep_queue;
 
 /* current running task PCB */
-register pcb_t * current_running asm("tp");
+register pcb_t* current_running asm("tp");
 extern pid_t process_id;
 
 extern pcb_t pcb[NUM_MAX_TASK];
 extern pcb_t pid0_pcb;
 extern const ptr_t pid0_stack;
 
-extern void switch_to(pcb_t *prev, pcb_t *next);
+extern void switch_to(pcb_t* prev, pcb_t* next);
 void do_scheduler(void);
 void do_sleep(uint32_t);
 
-void do_block(list_node_t *, list_head *queue);
-void do_unblock(list_node_t *);
+void do_block(list_node_t*, list_head* queue);
+void do_unblock(list_node_t*);
 
 /************************************************************/
 /* Do not touch this comment. Reserved for future projects. */

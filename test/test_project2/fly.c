@@ -16,14 +16,11 @@ static char plane5[] = {"    `~~~~~/ /~~` "};
 static char plane6[] = {"      -==/ /     "};
 static char plane7[] = {"        '-'      "};
 
-int main(void)
-{
+int main(void) {
     int j = 5;
 
-    while (1)
-    {
-        for (int i = 0; i < 50; i++)
-        {
+    while (1) {
+        for (int i = 0; i < 50; i++) {
             /* move */
             sys_move_cursor(i, j + 0);
             printf("%s", plane1);
@@ -46,7 +43,7 @@ int main(void)
             sys_move_cursor(i, j + 6);
             printf("%s", plane7);
         }
-        // sys_yield();
+        sys_yield();
 
         sys_move_cursor(0, j + 0);
         printf("%s", blank);

@@ -8,7 +8,7 @@
 
 #define KERNEL_STACK		0x50500000
 
-.equ kernel_stack, 0x50500000
+.equ kernel_stack, 0x50500000+4096
 
 .extern __bss_start
 .extern __BSS_END__
