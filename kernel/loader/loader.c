@@ -2,56 +2,39 @@
 #include <os/string.h>
 #include <os/kernel.h>
 #include <type.h>
+#include<os/loader.h>
 #include <printk.h>
+#define PIPE_LOC 0x54000000 /* address of pipe */
+/* Boot info offsets used by createimage.c */
+#define BOOT_LOADER_SIG_OFFSET 0x1fe
+#define APP_INFO_ADDR_LOC (BOOT_LOADER_SIG_OFFSET - 10)
+#define BATCH_FILE_MAX_TASKS 16
+#define BATCH_FILE_TASK_NAME_LEN 16
 
-
-uint64_t load_single_task(char *task_name);
-
-
-uint64_t load_task_img(char *taskname)
+uint64_t load_task_img(char *task_name)
 {
-
-    return load_single_task(taskname);
-}
-
-
-uint64_t load_single_task(char *task_name)
-{
-    // 遍历所有注册的任务 (在 image 尾部的信息)
+    // load task via task name, thus the arg should be 'char *taskname'
     for (int i = 0; i < TASK_MAXNUM; i++)
     {
-       
+        /* 只考虑有效的已登记任务（block_nums>0），避免加载未使用的 slot */
         if (tasks[i].block_nums > 0 && strcmp(task_name, tasks[i].task_name) == 0)
         {
-          
-            //固定分区策略 (TASK_MEM_BASE + i * SIZE)
-            // 在 Project 4 引入虚存前，这种方式是可行的。
             uint64_t mem_addr = TASK_MEM_BASE + TASK_SIZE * i;
-
-            // 2. 计算 SD 卡中的扇区位置
             int start_sec = tasks[i].start_addr / 512;
-            
-            // 3. 执行读取操作 (从 SD 卡 -> 内存)
-           
             bios_sd_read(mem_addr, tasks[i].block_nums, start_sec);
-
-            // 4. 计算并返回入口地址
-            // 入口地址 = 内存基地址 + (文件内的偏移量)
             return mem_addr + (tasks[i].start_addr - start_sec * 512);
         }
     }
-    
-   
     return 0;
 }
 
-// 辅助功能：列出所有可用任务
-void list_user_tasks()
+void do_list()
 {
+    printk("User programs:\n");
     for (int i = 0; i < TASK_MAXNUM; i++) {
-        if (strlen(tasks[i].task_name) > 0) {
-        
-            printk("%s\n", tasks[i].task_name); 
+        if (strlen(tasks[i].task_name) > 0){
+            printk("%s ", tasks[i].task_name);
         }
     }
+    printk("\n");
 }

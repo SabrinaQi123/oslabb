@@ -27,12 +27,12 @@ main:
 	jal bios_func_entry
 
 	// call BIOS to read kernel in SD card
-	li a7, BIOS_SDREAD        
-    la a0, kernel         
-    la t0, os_size_loc        
-    lh a1, 0(t0)              
-    li a2, 1                  
-    jal bios_func_entry       
+	li a7, BIOS_SDREAD        # BIOS功能号：SD卡读
+    la a0, kernel             # 目标内存地址
+    la t0, os_size_loc        # 读取长度位置
+    lh a1, 0(t0)              # 读取长度（单位：扇区），参数2
+    li a2, 1                  # SD卡起始扇区（第二个扇区），参数3
+    jal bios_func_entry       # 调用BIOS
  
 
 	// load task-related arguments and pass them to kernel
@@ -62,5 +62,5 @@ stop:
 
 .data
 
-msg: .string "It's wangheming23's bootloader...\n\r"
+msg: .string "It's wangheming's bootloader...\n\r"
 
