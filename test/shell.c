@@ -26,6 +26,7 @@
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *  * * * * * * * * * * */
 
 #include <ctype.h>
+#include <os/loader.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

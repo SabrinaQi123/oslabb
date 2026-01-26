@@ -62,5 +62,5 @@ stop:
 
 .data
 
-msg: .string "It's wangheming's bootloader...\n\r"
+msg: .string "It's [who]'s bootloader...\n\r"
 
