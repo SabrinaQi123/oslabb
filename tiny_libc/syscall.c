@@ -201,4 +201,34 @@ int sys_mbox_recv(int mbox_idx, void *msg, int msg_length) {
     /* call invoke_syscall to implement sys_mbox_recv */
     return invoke_syscall(SYSCALL_MBOX_RECV, (long)mbox_idx, (long)msg, (long)msg_length, IGNORE, IGNORE);
 }
+
+// New pipe system calls stubs
+int sys_pipe_open(const char *name) {
+    return invoke_syscall(SYSCALL_PIPE_OPEN, (long)name, IGNORE, IGNORE, IGNORE, IGNORE);
+}
+
+long sys_pipe_give_pages(int pipe_idx, void *src, size_t length) {
+    return invoke_syscall(SYSCALL_PIPE_GIVE, (long)pipe_idx, (long)src, (long)length, IGNORE, IGNORE);
+}
+
+long sys_pipe_take_pages(int pipe_idx, void *dst, size_t length) {
+    return invoke_syscall(SYSCALL_PIPE_TAKE, (long)pipe_idx, (long)dst, (long)length, IGNORE, IGNORE);
+}
+
+void sys_taskset (pid_t pid, int mask) {
+    /* call invoke_syscall to implement sys_taskset */
+    invoke_syscall(SYSCALL_TASKSET, (long)pid, (long)mask, IGNORE, IGNORE, IGNORE);
+}
+
+int sys_thread_create(void (*start_routine)(void *), void *arg) {
+    return invoke_syscall(SYSCALL_THREAD_CREATE, (long)start_routine, (long)arg, IGNORE, IGNORE, IGNORE);
+}
+
+void sys_thread_exit(void *retval) {
+    invoke_syscall(SYSCALL_THREAD_EXIT, (long)retval, IGNORE, IGNORE, IGNORE, IGNORE);
+}
+
+int sys_thread_join(pid_t tid, void **retval) {
+    return invoke_syscall(SYSCALL_THREAD_JOIN, (long)tid, (long)retval, IGNORE, IGNORE, IGNORE);
+}
 /************************************************************/

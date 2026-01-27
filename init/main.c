@@ -9,6 +9,7 @@
 #include <os/lock.h>
 #include <os/mm.h>
 #include <os/sched.h>
+#include <os/smp.h>     // <--- [新增] 修复 get_current_cpu_id 报错
 #include <os/string.h>
 #include <os/task.h>
 #include <os/time.h>
@@ -42,7 +43,8 @@ static void init_task_info(int app_info_loc, int app_info_size) {
     blocknums = NBYTES2SEC(app_info_loc + app_info_size) - start_sec;
     int task_info_addr = TASK_INFO_MEM;
     bios_sd_read(task_info_addr, blocknums, start_sec);
-    int start_addr = (TASK_INFO_MEM + app_info_loc - start_sec * SECTOR_SIZE);
+    // [修复] 将 int 改为 uintptr_t，避免 64 位地址被截断的警告
+    uintptr_t start_addr = (TASK_INFO_MEM + app_info_loc - start_sec * SECTOR_SIZE);
     memcpy((uint8_t *)tasks, (uint8_t *)start_addr, app_info_size);
 }
 
@@ -51,7 +53,7 @@ void init_pcb_stack(ptr_t kernel_stack, ptr_t user_stack, ptr_t entry_point, pcb
     /* initialization of registers on kernel stack
      * HINT: sp, ra, sepc, sstatus
      * NOTE: To run the task in user mode, you should set corresponding bits
-     *     of sstatus(SPP, SPIE, etc.).
+     * of sstatus(SPP, SPIE, etc.).
      */
     regs_context_t *pt_regs =
         (regs_context_t *)(kernel_stack - sizeof(regs_context_t));
@@ -127,6 +129,17 @@ static void init_syscall(void) {
 }
 /************************************************************/
 
+/*
+ * Once a CPU core calls this function,
+ * it will stop executing!
+ */
+static void kernel_brake(void)
+{
+    disable_interrupt();
+    while (1)
+        __asm__ volatile("wfi");
+}
+
 int main(int app_info_loc, int app_info_size) {
     // Init jump table provided by kernel and bios(ΦωΦ)
     init_jmptab();
@@ -169,7 +182,23 @@ int main(int app_info_loc, int app_info_size) {
     init_screen();
     printk("> [INIT] SCREEN initialization succeeded.\n");
     printk("> [INIT] CPU time_base: %lu Hz\n", time_base);
+    
     // Setup timer interrupt and enable all interrupt globally
+
+    /*
+     * Just start kernel with VM and print this string
+     * in the first part of task 1 of project 4.
+     * NOTE: if you use SMP, then every CPU core should call
+     * `kernel_brake()` to stop executing!
+     */
+    printk("> [INIT] CPU #%u has entered kernel with VM!\n",
+        (unsigned int)get_current_cpu_id());
+    
+    // TODO: [p4-task1 cont.] remove the brake and continue to start user processes.
+    // 在做完 Task 1 后，你需要注释掉下面这行 kernel_brake();
+    kernel_brake();
+
+    // TODO: [p2-task4] Setup timer interrupt and enable all interrupt globally
     // NOTE: The function of sstatus.sie is different from sie's
     bios_set_timer(get_ticks() + TIMER_INTERVAL); // 设置第一次定时器中断
 
